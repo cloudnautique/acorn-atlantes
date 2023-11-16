@@ -1,0 +1,127 @@
+name: "Atlantis"
+args: {
+	// comma separated list 
+	repoAllowList: ""
+	// disable GitHub personal access token method. Default is false.
+	disableGitHubPAT: false
+	// Use GitHub App for authentication. This will disable GitHub PAT auth. Default is false.
+	enableGitHubApp: false
+	// Username for Atlantis basic Auth. Default is randomly generated string.
+	atlantisUsername: ""
+	// Password for Atlantis basic auth, should be an Acorn encypted value. Default is randomly generated string.
+	atlantisPassword: ""
+	// Server Config for non-secret information. Default is empty. Create a YAML file and run --serverConfigYaml=@file.yaml
+	serverConfigYaml: {}
+	// Pass values to populate server side repo configuration.
+	serverReposYaml: {}
+	// Bootstrap with known authentication credentials. Default is false.
+	bootstrap: false
+}
+
+services: redis: image: "ghcr.io/acorn-io/redis:*"
+
+containers: atlantis: {
+	// This will pull the latest and bake it into the Acorn image so the version will always be consistent.
+	image: "ghcr.io/runatlantis/atlantis:v0.26.0"
+	ports: publish:    "4141/http"
+	dirs: "/atlantis": "volume://atlantis-data"
+	files: {
+		"/acorn/atlantis/config.yaml": std.toYAML(args.serverConfigYaml)
+		"/acorn/atlantis/repos.yaml":  std.toYAML(args.serverReposYaml)
+	}
+	env: {
+		ATLANTIS_REDIS_HOST:     "@{services.redis.address}"
+		ATLANTIS_REDIS_PORT:     "@{services.redis.ports.6379}"
+		ATLANTIS_REDIS_PASSWORD: "@{services.redis.secrets.admin.token}"
+		ATLANTIS_ATLANTIS_URL:   "https://@{service.atlantis.endpoint}"
+		if args.serverReposYaml != {} {
+			ATLANTIS_REPO_CONFIG: "/acorn/atlantis/repos.yaml"
+		}
+		"secret://envconfig": ""
+	}
+	if args.serverConfigYaml != {} {
+		command: [
+			"server",
+			"--config",
+			"/acorn/atlantis/config.yaml",
+			"--repo-allowlist",
+			args.repoAllowList,
+		]
+	} else {
+		command: [
+			"server",
+			"--repo-allowlist",
+			args.repoAllowList,
+		]
+	}
+}
+
+if !args.enableGitHubApp {
+	if !args.disableGitHubPAT {
+		secrets: github: {
+			type: "opaque"
+			data: {
+				username:      "changeme"
+				password:      "changeme"
+				webhookSecret: "changeme"
+			}
+		}
+		containers: atlantis: env: {
+			ATLANTIS_GH_USER:           "secret://github/username"
+			ATLANTIS_GH_TOKEN:          "secret://github/password"
+			ATLANTIS_GH_WEBHOOK_SECRET: "secret://github/webhookSecret"
+		}
+	}
+}
+
+if args.enableGitHubApp {
+	secrets: "github-app": {
+		type: "opaque"
+		data: {
+			appId:         ""
+			appKey:        ""
+			webhookSecret: ""
+		}
+	}
+	containers: atlantis: {
+		dirs: "/acorn/atlantis/gh-app-info": "secret://github-app"
+		env: {
+			ATLANTIS_GH_APP_ID:         "secret://github-app/appId"
+			ATLANTIS_GH_APP_KEY_FILE:   "/acorn/atlantis/gh-app-info/appKey"
+			ATLANTIS_GH_WEBHOOK_SECRET: "secret://github-app/webhookSecret"
+			ATLANTIS_WRITE_GIT_CREDS:   "true"
+		}
+	}
+}
+
+if args.bootstrap {
+	containers: atlantis: env: {
+		ATLANTIS_WEB_BASIC_AUTH: "true"
+		ATLANTIS_WEB_USERNAME:   "atlantis"
+		ATLANTIS_WEB_PASSWORD:   "atlantis"
+	}
+	// So it can go through the web flow to create.
+	secrets: "github-app": type: "opaque"
+} else {
+	containers: atlantis: env: {
+		ATLANTIS_WEB_BASIC_AUTH: "true"
+		ATLANTIS_WEB_USERNAME:   "secret://atlantis-creds/username"
+		ATLANTIS_WEB_PASSWORD:   "secret://atlantis-creds/password"
+	}
+	secrets: "atlantis-creds": {
+		type: "basic"
+		params: {
+			usernameLength:     12
+			usernameCharacters: "a-zA-Z0-9"
+			passwordLength:     24
+			passwordCharacters: "a-zA-Z0-9"
+		}
+	}
+}
+
+volumes: "atlantis-data": {}
+
+secrets: envconfig: {
+	type: "opaque"
+	data: {}
+}

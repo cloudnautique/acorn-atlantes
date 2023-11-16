@@ -1,0 +1,86 @@
+args: {
+	// If true, will bootstrap the Atlantis server.
+	bootstrap: true
+}
+
+acorns: atlantis: {
+	image: "ghcr.io/cloudnautique/atlantis:v0.26.0-#"
+	secrets: [
+		"envconfig:envconfig",
+		"github-app:github-app",
+		"atlantis-creds:atlantis-creds",
+	]
+	deployArgs: {
+		bootstrap:       args.bootstrap
+		repoAllowList:   "github.com/cloudnautique/atlantis-testing"
+		enableGitHubApp: !args.bootstrap
+		//serverConfigYaml: {
+		//automerge:       true
+		//"parallel-plan": true
+		//}
+		//serverReposYaml: {
+		//	repos: [
+		//		{
+		//			id: "/github.com/cloudnautique/atlantis-testing/"
+		//			plan_requirements: ["mergeable"]
+		//			apply_requirements: ["approved"]
+		//			import_requirements: ["approved"]
+		//		},
+		//	]
+		//}
+	}
+}
+
+acorns: setup: {
+	name:  "Setup Github App"
+	image: "ghcr.io/acorn-io/secret-create-helper:v0.#.#-#"
+	deployArgs: {
+		secretKeys:         "appId,webhookSecret"
+		textareaSecretKeys: "appKey"
+		instructions:       localData.setupInstructions
+	}
+}
+
+acorns: "atlantis-auth-setup": {
+	name:  "Setup Atlantis Web Auth"
+	image: "ghcr.io/acorn-io/secret-create-helper:v0.#.#-#"
+	deployArgs: {
+		secretKeys: "username,password"
+		instructions: """
+        # Enter the username and password for the Atlantis admin user.
+        """
+	}
+}
+
+secrets: {
+	envconfig: external:     "envconfig"
+	"github-app": alias:     "setup.output"
+	"atlantis-creds": alias: "atlantis-auth-setup.output"
+}
+
+localData: setupInstructions: """
+# Setup Atlantis:
+
+## Overview
+
+In this setup, you will click on a link to the Atlantis app. 
+The initial credentials will be:
+
+ - U: atlantis
+ - P: atlantis 
+ 
+After setup, it will be the new value.
+
+## GH App setup
+
+To go to the atlantis GH App setup page.
+
+- Run `acorn ps` to get the URL for the Atlantis server.
+- Click on the link for the Atlantis server.
+- login with the credentials above.
+- Append /github-app/setup to the URL.
+- Click 'Setup' to create the GH App.
+- Follow the instructions at the top of the response page to install the App.
+- Paste the values from the response page into the fields below.
+- You will need to update the app `acorn run --update -n [APPNAME] --bootstrap=false` after you click 'Submit'
+"""
